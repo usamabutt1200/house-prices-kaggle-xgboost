@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import pickle
 import joblib
 
 # ==========================================
@@ -8,17 +9,21 @@ import joblib
 # ==========================================
 st.set_page_config(page_title="House Price Predictor", layout="centered", page_icon="🏠")
 
-# Model file load karein (.pkl file check karein aapke local folder mein ho)
 @st.cache_resource
 def load_model():
-    # Kyunki pipeline .pkl format mein hai, joblib ya pickle dono se load ho sakti hai
-    return joblib.load('house_price_xgb_model.pkl')
+    # Pehle pickle se load karne ki koshish karein (kyunki aapne .pkl banayi thi)
+    try:
+        with open('house_price_xgb_model.pkl', 'rb') as file:
+            return pickle.load(file)
+    except Exception:
+        # Agar pickle fail ho toh joblib se backup load karein
+        return joblib.load('house_price_xgb_model.pkl')
 
 try:
     model_pipeline = load_model()
     st.success("🤖 Model loaded successfully!")
 except Exception as e:
-    st.error(f"❌ Error loading model: Ensure 'house_price_xgb_model.pkl' is in the same directory.")
+    st.error(f"❌ Error loading model: Ensure 'house_price_xgb_model.pkl' is correct. Technical Error: {str(e)}")
     st.stop()
 
 # ==========================================
@@ -29,7 +34,6 @@ st.markdown("Enter the property details below to estimate the market valuation u
 
 st.subheader("📋 Property Features Input")
 
-# 2-column layout inputs ke liye
 col1, col2 = st.columns(2)
 
 with col1:
@@ -41,15 +45,14 @@ with col1:
 with col2:
     year_built = st.number_input("Year Built:", min_value=1800, max_value=2026, value=2000)
     lot_area = st.number_input("Lot Area in sq ft:", min_value=500, max_value=100000, value=10000)
-# Default/Fallback columns handle karne ke liye jo Kaggle dataset mein hote hain par UI mein nahi hain
-# Hamari input pipeline ko poore columns ki zaroorat hoti hai
-all_columns = model_pipeline.named_steps['preprocessor'].transformers[0][2] + model_pipeline.named_steps['preprocessor'].transformers[1][2]
+    neighborhood = st.selectbox("Neighborhood:", options=['CollgCr', 'Veenker', 'Crawfor', 'NoRidge', 'Mitchel', 'Somerst', 'NridgHt', 'OldTown', 'Edwards', 'Gilbert'])
+    ms_zoning = st.selectbox("MS Zoning:", options=['RL', 'RM', 'C (all)', 'FV', 'RH'])
 
 # ==========================================
 # 3. PREDICTION LOGIC
 # ==========================================
 if st.button("💰 Estimate House Price", type="primary"):
-    # User inputs ko aik base dictionary mein dalna
+    # User inputs dictionary
     input_data = {
         'GrLivArea': [gr_liv_area],
         'OverallQual': [overall_qual],
@@ -61,21 +64,38 @@ if st.button("💰 Estimate House Price", type="primary"):
         'MSZoning': [ms_zoning]
     }
     
-    # Missing columns ko dummy variables (NaN/None) se fill karna taaki pipeline crash na ho
-    for col in all_columns:
-        if col not in input_data:
-            input_data[col] = [np.nan]
-            
-    # Dataframe structure design karein
-    input_df = pd.DataFrame(input_data)[all_columns]
+    # DataFrame design
+    input_df = pd.DataFrame(input_data)
     
-    # Model se prediction nikalna
-    predicted_log_price = model_pipeline.predict(input_df)
-    
-    # Kyunki model log scale par train hua tha, isko back-transform (exp) karna zaroori hai
-    final_price = np.expm1(predicted_log_price)[0]
-    
-    # Valuations interface par show karna
-    st.markdown("---")
-    st.metric(label="Estimated Market Value", value=f"${final_price:,.2f}")
-    st.info("💡 Note: This estimation is calculated dynamically by the pre-trained XGBoost Model Pipeline.")
+    try:
+        # Preprocessor se target columns extract karna dynamically
+        feature_names = model_pipeline.named_steps['preprocessor'].get_feature_names_out()
+        all_base_columns = [col.split('__')[-1] for col in feature_names]
+        
+        # Missing features ko handle karna taaki pipeline crash na ho
+        for col in all_base_columns:
+            if col not in input_df.columns:
+                input_df[col] = np.nan
+                
+        # Sequence sahi karna jaisa model ko chahiye
+        final_cols = [col for col in input_df.columns if col in all_base_columns]
+        input_df = input_df[final_cols]
+        
+        # Prediction
+        predicted_log_price = model_pipeline.predict(input_df)
+        final_price = np.expm1(predicted_log_price)[0]
+        
+        st.markdown("---")
+        st.metric(label="Estimated Market Value", value=f"${final_price:,.2f}")
+        st.info("💡 Note: This estimation is calculated dynamically by the pre-trained XGBoost Model Pipeline.")
+        
+    except Exception as prediction_error:
+        st.error(f"⚠️ App structure mismatch: {str(prediction_error)}")
+        st.warning("Running automatic robust fallback prediction...")
+        # Fallback raw features method
+        try:
+            predicted_log_price = model_pipeline.predict(pd.DataFrame(input_data))
+            final_price = np.expm1(predicted_log_price)[0]
+            st.metric(label="Estimated Market Value (Fallback Mode)", value=f"${final_price:,.2f}")
+        except Exception as fallback_error:
+            st.error("Could not run fallback prediction. Please re-train the model to align pipeline components.")
