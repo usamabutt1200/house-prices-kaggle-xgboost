@@ -41,9 +41,6 @@ with col1:
 with col2:
     year_built = st.number_input("Year Built:", min_value=1800, max_value=2026, value=2000)
     lot_area = st.number_input("Lot Area in sq ft:", min_value=500, max_value=100000, value=10000)
-    neighborhood = st.selectbox("Neighborhood:", options=['CollgCr', 'Veenker', 'Crawfor', 'NoRidge', 'Mitchel', 'Somerst', 'NridgHt', 'OldTown', 'Edwards', 'Gilbert'])
-    ms_zoning = st.selectbox("MS Zoning:", options=['RL', 'RM', 'C (all)', 'FV', 'RH'])
-
 # Default/Fallback columns handle karne ke liye jo Kaggle dataset mein hote hain par UI mein nahi hain
 # Hamari input pipeline ko poore columns ki zaroorat hoti hai
 all_columns = model_pipeline.named_steps['preprocessor'].transformers[0][2] + model_pipeline.named_steps['preprocessor'].transformers[1][2]
