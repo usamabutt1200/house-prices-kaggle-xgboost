@@ -11,19 +11,17 @@ st.set_page_config(page_title="House Price Predictor", layout="centered", page_i
 
 @st.cache_resource
 def load_model():
-    # Pehle pickle se load karne ki koshish karein (kyunki aapne .pkl banayi thi)
     try:
         with open('house_price_xgb_model.pkl', 'rb') as file:
             return pickle.load(file)
     except Exception:
-        # Agar pickle fail ho toh joblib se backup load karein
         return joblib.load('house_price_xgb_model.pkl')
 
 try:
     model_pipeline = load_model()
     st.success("🤖 Model loaded successfully!")
 except Exception as e:
-    st.error(f"❌ Error loading model: Ensure 'house_price_xgb_model.pkl' is correct. Technical Error: {str(e)}")
+    st.error(f"❌ Error loading model: Ensure 'house_price_xgb_model.pkl' is correct.")
     st.stop()
 
 # ==========================================
@@ -49,53 +47,49 @@ with col2:
     ms_zoning = st.selectbox("MS Zoning:", options=['RL', 'RM', 'C (all)', 'FV', 'RH'])
 
 # ==========================================
-# 3. PREDICTION LOGIC
+# 3. ROBUST PREDICTION LOGIC WITH AUTO-COLUMNS
 # ==========================================
 if st.button("💰 Estimate House Price", type="primary"):
-    # User inputs dictionary
-    input_data = {
-        'GrLivArea': [gr_liv_area],
-        'OverallQual': [overall_qual],
-        'GarageCars': [garage_cars],
-        'TotalBsmtSF': [total_bsmt_sf],
-        'YearBuilt': [year_built],
-        'LotArea': [lot_area],
-        'Neighborhood': [neighborhood],
-        'MSZoning': [ms_zoning]
-    }
-    
-    # DataFrame design
-    input_df = pd.DataFrame(input_data)
+    # Pehle model pipeline ke original input columns dhoondein
+    try:
+        # Preprocessor ke underlying feature names list check karna
+        original_features = model_pipeline.named_steps['preprocessor'].feature_names_in_
+    except AttributeError:
+        # Agar explicit features na milein toh default Kaggle train features ka fallback dictionary structure lagana
+        original_features = [
+            'MSSubClass', 'MSZoning', 'LotFrontage', 'LotArea', 'Neighborhood', 
+            'OverallQual', 'YearBuilt', 'MasVnrType', 'TotalBsmtSF', 'GrLivArea', 
+            'FullBath', 'GarageCars', 'GarageYrBlt', 'PoolQC'
+        ]
+
+    # Ek blank dictionary banayein jise default values se populate karenge
+    full_input_dict = {}
+    for col in original_features:
+        full_input_dict[col] = [np.nan]  # Default setting missing parameters to NaN
+
+    # User ke inputs ko dictionary mein update karein
+    full_input_dict['GrLivArea'] = [gr_liv_area]
+    full_input_dict['OverallQual'] = [overall_qual]
+    full_input_dict['GarageCars'] = [garage_cars]
+    full_input_dict['TotalBsmtSF'] = [total_bsmt_sf]
+    full_input_dict['YearBuilt'] = [year_built]
+    full_input_dict['LotArea'] = [lot_area]
+    full_input_dict['Neighborhood'] = [neighborhood]
+    full_input_dict['MSZoning'] = [ms_zoning]
+
+    # DataFrame ko exactly usi order mein convert karna jo pipeline chahti hai
+    input_df = pd.DataFrame(full_input_dict)[list(original_features)]
     
     try:
-        # Preprocessor se target columns extract karna dynamically
-        feature_names = model_pipeline.named_steps['preprocessor'].get_feature_names_out()
-        all_base_columns = [col.split('__')[-1] for col in feature_names]
-        
-        # Missing features ko handle karna taaki pipeline crash na ho
-        for col in all_base_columns:
-            if col not in input_df.columns:
-                input_df[col] = np.nan
-                
-        # Sequence sahi karna jaisa model ko chahiye
-        final_cols = [col for col in input_df.columns if col in all_base_columns]
-        input_df = input_df[final_cols]
-        
-        # Prediction
+        # Prediction process run karein
         predicted_log_price = model_pipeline.predict(input_df)
         final_price = np.expm1(predicted_log_price)[0]
         
         st.markdown("---")
-        st.metric(label="Estimated Market Value", value=f"${final_price:,.2f}")
+        st.balloons()  # Prediction success par celebration effect
+        st.metric(label="📊 Estimated Market Value", value=f"${final_price:,.2f}")
         st.info("💡 Note: This estimation is calculated dynamically by the pre-trained XGBoost Model Pipeline.")
         
     except Exception as prediction_error:
-        st.error(f"⚠️ App structure mismatch: {str(prediction_error)}")
-        st.warning("Running automatic robust fallback prediction...")
-        # Fallback raw features method
-        try:
-            predicted_log_price = model_pipeline.predict(pd.DataFrame(input_data))
-            final_price = np.expm1(predicted_log_price)[0]
-            st.metric(label="Estimated Market Value (Fallback Mode)", value=f"${final_price:,.2f}")
-        except Exception as fallback_error:
-            st.error("Could not run fallback prediction. Please re-train the model to align pipeline components.")
+        st.error(f"⚠️ Prediction Error: {str(prediction_error)}")
+        st.warning("Please make sure your model pipeline was saved completely on Kaggle.")
